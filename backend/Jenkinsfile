@@ -1,0 +1,24 @@
+pipeline {
+    agent any
+    stages {
+        stage('Checkout') { steps { checkout scm } }
+        stage('Build') { steps { sh 'mvn clean package' } }
+        stage('Deploy') {
+            steps {
+                sh '''
+                    sudo cp target/todo-backend.war /opt/tomcat/webapps/todo-backend.war
+                    sudo systemctl restart tomcat
+                '''
+            }
+        }
+        stage('Verify') {
+            steps {
+                sh '''
+                    sleep 10
+                    curl -f http://localhost:8081/todo-backend/api/todos
+                    curl -f http://localhost/api/todos
+                '''
+            }
+        }
+    }
+}
