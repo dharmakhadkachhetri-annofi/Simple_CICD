@@ -38,7 +38,7 @@ pipeline {
 
                 git(
                     branch: "${params.BRANCH}",
-                    credentialsId: '76c78476-c32f-46da-83bf-b4f7e40fc192',
+                    credentialsId: 'github-ssh',
                     url: "${GIT_REPO}"
                 )
             }
