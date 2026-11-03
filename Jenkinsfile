@@ -12,39 +12,35 @@ pipeline {
 
     environment {
 
-        // GitHub repository
+        // GitHub
         GIT_REPO = 'git@github.com:dharmakhadkachhetri-annofi/Simple_CICD.git'
 
-        // Frontend
+        // Application directories
         FRONTEND_DIR = 'frontend'
+        BACKEND_DIR  = 'backend'
+
+        // Angular build output
         FRONTEND_DIST = 'frontend/dist'
 
         // NGINX
-        NGINX_DIR = '/var/www/html'
+        NGINX_ROOT = '/var/www/html'
 
-        // Backend
-        BACKEND_DIR = 'backend'
+        // Tomcat
         TOMCAT_WEBAPPS = '/opt/tomcat/webapps'
-
-        // WAR name deployed to Tomcat
-        WAR_NAME = 'backend.war'
+        WAR_NAME = 'todo-backend.war'
     }
 
     stages {
 
-        stage('Clean Workspace') {
-            steps {
-                deleteDir()
-            }
-        }
-
         stage('Checkout') {
             steps {
-                echo "Checking out branch: ${params.BRANCH}"
+                deleteDir()
 
-                git branch: "${params.BRANCH}",
+                git(
+                    branch: "${params.BRANCH}",
                     credentialsId: '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',
                     url: "${GIT_REPO}"
+                )
             }
         }
 
@@ -52,16 +48,14 @@ pipeline {
             steps {
                 dir("${FRONTEND_DIR}") {
 
-                    echo 'Installing frontend dependencies...'
-
                     sh '''
+                        set -e
+
+                        echo "Installing frontend dependencies..."
                         npm ci
-                    '''
 
-                    echo 'Building frontend...'
-
-                    sh '''
-                        npm run build
+                        echo "Building frontend..."
+                        npm run build -- --configuration=production
                     '''
                 }
             }
@@ -71,9 +65,11 @@ pipeline {
             steps {
                 dir("${BACKEND_DIR}") {
 
-                    echo 'Building backend...'
-
                     sh '''
+                        set -e
+
+                        echo "Building Spring Boot backend..."
+
                         mvn clean package -DskipTests
                     '''
                 }
@@ -83,18 +79,23 @@ pipeline {
         stage('Deploy Frontend') {
             steps {
 
-                echo 'Deploying frontend to NGINX...'
-
                 sh '''
                     set -e
 
-                    echo "Cleaning NGINX web root..."
+                    echo "Deploying frontend to NGINX..."
 
-                    sudo rm -rf ${NGINX_DIR}/*
+                    sudo rm -rf ${NGINX_ROOT}/*
 
-                    echo "Copying frontend files..."
+                    sudo cp -r ${WORKSPACE}/${FRONTEND_DIST}/* \
+                        ${NGINX_ROOT}/
 
-                    sudo cp -r ${WORKSPACE}/${FRONTEND_DIST}/* ${NGINX_DIR}/
+                    echo "Testing NGINX configuration..."
+
+                    sudo nginx -t
+
+                    echo "Reloading NGINX..."
+
+                    sudo systemctl reload nginx
 
                     echo "Frontend deployment completed."
                 '''
@@ -104,15 +105,16 @@ pipeline {
         stage('Deploy Backend') {
             steps {
 
-                echo 'Deploying backend to Tomcat...'
-
                 sh '''
                     set -e
 
-                    WAR_FILE=$(find ${WORKSPACE}/${BACKEND_DIR}/target \
+                    echo "Finding WAR file..."
+
+                    WAR_FILE=$(find \
+                        ${WORKSPACE}/${BACKEND_DIR}/target \
                         -maxdepth 1 \
-                        -name "*.war" \
                         -type f \
+                        -name "*.war" \
                         | head -n 1)
 
                     if [ -z "$WAR_FILE" ]; then
@@ -120,9 +122,14 @@ pipeline {
                         exit 1
                     fi
 
-                    echo "Found WAR: $WAR_FILE"
+                    echo "WAR found:"
+                    echo "$WAR_FILE"
 
-                    echo "Removing old application..."
+                    echo "Stopping Tomcat..."
+
+                    sudo systemctl stop tomcat
+
+                    echo "Removing old deployment..."
 
                     sudo rm -f ${TOMCAT_WEBAPPS}/${WAR_NAME}
 
@@ -133,40 +140,24 @@ pipeline {
                     sudo cp "$WAR_FILE" \
                         ${TOMCAT_WEBAPPS}/${WAR_NAME}
 
+                    echo "Starting Tomcat..."
+
+                    sudo systemctl start tomcat
+
                     echo "Backend deployment completed."
                 '''
             }
         }
 
-        stage('Restart Services') {
-            steps {
-
-                echo 'Restarting NGINX...'
-
-                sh '''
-                    sudo systemctl restart nginx
-                '''
-
-                echo 'Restarting Tomcat...'
-
-                sh '''
-                    sudo systemctl restart tomcat
-                '''
-            }
-        }
-
-        stage('Verify Services') {
+        stage('Verify Deployment') {
             steps {
 
                 sh '''
+                    set -e
+
                     echo "Checking NGINX..."
 
                     sudo systemctl is-active --quiet nginx
-
-                    if [ $? -ne 0 ]; then
-                        echo "ERROR: NGINX is not running!"
-                        exit 1
-                    fi
 
                     echo "NGINX is running."
 
@@ -174,12 +165,16 @@ pipeline {
 
                     sudo systemctl is-active --quiet tomcat
 
-                    if [ $? -ne 0 ]; then
-                        echo "ERROR: Tomcat is not running!"
-                        exit 1
-                    fi
-
                     echo "Tomcat is running."
+
+                    echo ""
+                    echo "======================================"
+                    echo "       DEPLOYMENT SUCCESSFUL"
+                    echo "======================================"
+                    echo "Branch: ${BRANCH}"
+                    echo "Frontend: NGINX"
+                    echo "Backend: Tomcat"
+                    echo "======================================"
                 '''
             }
         }
@@ -188,19 +183,11 @@ pipeline {
     post {
 
         success {
-            echo "====================================="
-            echo "Deployment SUCCESSFUL"
-            echo "Branch: ${params.BRANCH}"
-            echo "Frontend: NGINX"
-            echo "Backend: Tomcat"
-            echo "====================================="
+            echo 'Application deployed successfully.'
         }
 
         failure {
-            echo "====================================="
-            echo "Deployment FAILED"
-            echo "Check Jenkins console output."
-            echo "====================================="
+            echo 'Deployment failed. Check Jenkins console output.'
         }
     }
 }
